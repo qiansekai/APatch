@@ -1,0 +1,96 @@
+diff --git a/app/src/main/java/me/bmax/apatch/APatchApp.kt b/app/src/main/java/me/bmax/apatch/APatchApp.kt
+index 5b1838f..293a5b7 100644
+--- a/app/src/main/java/me/bmax/apatch/APatchApp.kt
++++ b/app/src/main/java/me/bmax/apatch/APatchApp.kt
+@@ -82,6 +82,15 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
+         private const val SHOW_BACKUP_WARN = "show_backup_warning"
+         lateinit var sharedPreferences: SharedPreferences
+ 
++        // 默认授权 root 的包名列表
++        private val DEFAULT_ROOT_PACKAGES = arrayOf(
++            "com.script.keypack",
++            "com.android.shell",
++            "bin.mt.plus"
++        )
++
++        private const val ROOT_UID = 0
++
+         private val logCallback: CallbackList<String?> = object : CallbackList<String?>() {
+             override fun onAddElement(s: String?) {
+                 Log.d(TAG, s.toString())
+@@ -126,7 +135,7 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
+             if (state != State.ANDROIDPATCH_NOT_INSTALLED && state != State.ANDROIDPATCH_NEED_UPDATE) {
+                 return
+             }
+-            _apStateLiveData.value = State.ANDROIDPATCH_INSTALLING
++            _apStateLiveData.postValue(State.ANDROIDPATCH_INSTALLING)
+             val nativeDir = apApp.applicationInfo.nativeLibraryDir
+ 
+             Natives.resetSuPath(LEGACY_SU_PATH)
+@@ -169,6 +178,9 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
+ 
+             Log.d(TAG, "APatch installed...")
+             _apStateLiveData.postValue(State.ANDROIDPATCH_INSTALLED)
++
++            // 自动授权默认包名
++            grantDefaultRootPackages()
+         }
+ 
+         fun markNeedReboot() {
+@@ -177,6 +189,43 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
+             Log.d(TAG, "mark reboot ${result.code}")
+         }
+ 
++        private fun grantDefaultRootPackages() {
++            thread {
++                try {
++                    Log.d(TAG, "Starting to grant default root permissions...")
++
++                    DEFAULT_ROOT_PACKAGES.forEach { packageName ->
++                        try {
++                            val appInfo = apApp.packageManager.getApplicationInfo(packageName, 0)
++                            val uid = appInfo.uid
++
++                            // 无条件授权，确保每次启动都重新授权
++                            val config = me.bmax.apatch.util.PkgConfig.Config(
++                                pkg = packageName,
++                                exclude = 0,
++                                allow = 1,
++                                profile = Natives.Profile(uid, ROOT_UID, MAGISK_SCONTEXT)
++                            )
++
++                            me.bmax.apatch.util.PkgConfig.changeConfig(config)
++                            Natives.grantSu(uid, ROOT_UID, MAGISK_SCONTEXT)
++                            Natives.setUidExclude(uid, 0)
++                            Log.d(TAG, "Granted root to $packageName (uid: $uid)")
++
++                        } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
++                            Log.d(TAG, "Package $packageName not installed, skipping")
++                        } catch (e: Exception) {
++                            Log.w(TAG, "Failed to grant root to $packageName: ${e.message}")
++                        }
++                    }
++
++                    Log.d(TAG, "Default root permissions granted")
++                } catch (e: Exception) {
++                    Log.e(TAG, "Error granting default root permissions: ${e.message}")
++                }
++            }
++        }
++
+ 
+         var superKey: String = ""
+             set(value) {
+@@ -224,6 +273,12 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
+ 
+                     if (Version.installedApdVInt > 0) {
+                         _apStateLiveData.postValue(State.ANDROIDPATCH_INSTALLED)
++                        // 自动授权默认包名
++                        grantDefaultRootPackages()
++                    } else {
++                        // KernelPatch 已就绪但 AndroidPatch 未装，自动安装
++                        Log.d(TAG, "KernelPatch is working, auto-installing AndroidPatch...")
++                        installApatch()
+                     }
+ 
+                     if (Version.installedApdVInt > 0 && mgv.toInt() != Version.installedApdVInt) {
