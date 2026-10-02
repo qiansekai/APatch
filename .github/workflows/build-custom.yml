@@ -112,6 +112,30 @@ jobs:
           keyPassword: ${{ secrets.KEY_PASSWORD }}
           zipAlign: true
 
+      - name: Resign v2-only (KernelPatch trusts a lone v2 signature)
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        if: ${{ env.SIGNING_KEY != '' }}
+        run: |
+          set -e
+          echo "$SIGNING_KEY" | base64 -d > /tmp/ks.jks
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | tail -n1)
+          for APK in app/build/outputs/apk/release/*-signed.apk app/build/outputs/apk/debug/*-signed.apk; do
+            [ -f "$APK" ] || continue
+            $BT/apksigner sign --ks /tmp/ks.jks \
+              --ks-pass pass:$KEY_STORE_PASSWORD --key-pass pass:$KEY_PASSWORD \
+              --ks-key-alias $ALIAS \
+              --v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled false \
+              --out "$APK.v2" "$APK"
+            mv "$APK.v2" "$APK"
+            echo "--- $APK"
+            $BT/apksigner verify -v "$APK" | head -6
+          done
+          rm -f /tmp/ks.jks
+
       - name: Upload build artifact (Release)
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
