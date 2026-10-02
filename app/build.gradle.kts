@@ -237,7 +237,9 @@ fun downloadFileRetry(url: String, destFile: File, maxRetries: Int = 5) {
 
 registerDownloadTask(
     taskName = "downloadKpimg",
-    srcUrl = "https://github.com/bmax121/KernelPatch/releases/download/$kernelPatchVersion/kpimg-android",
+    // [CUSTOM] kernel-side trusted-manager whitelist is a compile-time constant,
+    // so the renamed manager (com.ap.tool) must be baked into kpimg itself.
+    srcUrl = "https://github.com/qiansekai/APatch/releases/download/kpimg-custom-0.13.9/kpimg-android",
     destPath = "${project.projectDir}/src/main/assets/kpimg",
     project = project
 )

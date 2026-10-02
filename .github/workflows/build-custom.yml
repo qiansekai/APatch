@@ -27,6 +27,14 @@ jobs:
           bash scripts/patch/rename-identity.sh
           echo "Identity renamed"
 
+      - name: Install custom kpimg
+        run: |
+          mkdir -p app/src/main/assets
+          curl -fsSL -o app/src/main/assets/kpimg \
+            https://github.com/qiansekai/APatch/releases/download/kpimg-custom-0.13.9/kpimg-android
+          ls -l app/src/main/assets/kpimg
+          sha256sum app/src/main/assets/kpimg
+
       - name: Generate version
         id: parse_version
         run: |
