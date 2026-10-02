@@ -22,6 +22,11 @@ jobs:
           git apply scripts/patch/apatch-custom.patch
           echo "Custom patch applied successfully"
 
+      - name: Rename manager identity
+        run: |
+          bash scripts/patch/rename-identity.sh
+          echo "Identity renamed"
+
       - name: Generate version
         id: parse_version
         run: |
@@ -105,7 +110,7 @@ jobs:
         if: ${{ env.SIGNING_KEY != '' }}
         uses: actions/upload-artifact@v6
         with:
-          name: APatch-Custom-Release
+          name: ap-Custom-Release
           path: |
             ${{ steps.sign_app.outputs.signedReleaseFile }}
 
@@ -115,6 +120,6 @@ jobs:
         if: ${{ env.SIGNING_KEY != '' }}
         uses: actions/upload-artifact@v6
         with:
-          name: APatch-Custom-Debug
+          name: ap-Custom-Debug
           path: |
             ${{ steps.sign_debug_app.outputs.signedReleaseFile }}
