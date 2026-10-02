@@ -1,5 +1,5 @@
 diff --git a/app/src/main/java/me/bmax/apatch/APatchApp.kt b/app/src/main/java/me/bmax/apatch/APatchApp.kt
-index 5b1838f..293a5b7 100644
+index 5b1838f..41d2aa8 100644
 --- a/app/src/main/java/me/bmax/apatch/APatchApp.kt
 +++ b/app/src/main/java/me/bmax/apatch/APatchApp.kt
 @@ -82,6 +82,15 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
@@ -94,3 +94,13 @@ index 5b1838f..293a5b7 100644
                      }
  
                      if (Version.installedApdVInt > 0 && mgv.toInt() != Version.installedApdVInt) {
+@@ -237,6 +292,9 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
+                                 Natives.resetSuPath(suPath)
+                             }
+                         }
++                        // [CUSTOM] 已装但版本不一致 → 自动升级系统补丁（installApatch 允许从 NEED_UPDATE 进入）
++                        Log.d(TAG, "AndroidPatch outdated ($installedApdVInt -> $mgv), auto-updating...")
++                        installApatch()
+                     }
+                     Log.d(TAG, "ap state: " + _apStateLiveData.value)
+ 
