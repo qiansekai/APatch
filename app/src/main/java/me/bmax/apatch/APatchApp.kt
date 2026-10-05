@@ -158,7 +158,11 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
                 "echo ${Version.getManagerVersion().second} > $APATCH_VERSION_PATH",
                 "restorecon -R $APATCH_FOLDER",
 
-                "${nativeDir}/libmagiskpolicy.so --magisk --live",
+                // 用上面刚建的 magiskpolicy -> apd 别名（argv[0]=magiskpolicy 时 apd 走
+                // policy_main）。原写法 ${nativeDir}/libmagiskpolicy.so 指向的文件在
+                // 任何 APK 里都不存在（上游与本 fork 的 lib/ 均无此 so），每次安装
+                // 必然 mksh "not found"，sepolicy live patch 这步从未真正执行过。
+                "$MAGISKPOLICY_BIN_PATH --magisk --live",
             )
 
             val shell = getRootShell()
