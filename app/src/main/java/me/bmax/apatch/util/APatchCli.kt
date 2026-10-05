@@ -94,7 +94,16 @@ private fun createMainRootShell() : Shell {
         }
     }
 
-    MainShell.setBuilder(builder)
+    try {
+        MainShell.setBuilder(builder)
+    } catch (e: IllegalStateException) {
+        // Cross-thread race: refresh()'s reflection reset of libsu's MainShell
+        // is not serialized against APatchCli.SHELL's lazy object init on other
+        // threads, so another thread may register the main shell in between.
+        // This builder already produced a usable shell; failing to re-register
+        // must not kill the caller (startup Thread-2 dies with a crash dialog).
+        Log.w(TAG, "MainShell already registered, skip setBuilder: " + e.message)
+    }
     return shell
 }
 
@@ -109,29 +118,36 @@ object APatchCli {
     fun refresh() {
         val tmp = SHELL
 
-        val clazz = MainShell::class.java // reset MainShell
-        clazz.getDeclaredField("isInitMain").apply {
-            isAccessible = true
-            setBoolean(null, false)
-            isAccessible = false
-        }
+        try {
+            val clazz = MainShell::class.java // reset MainShell
+            clazz.getDeclaredField("isInitMain").apply {
+                isAccessible = true
+                setBoolean(null, false)
+                isAccessible = false
+            }
 
-        clazz.getDeclaredField("mainShell").apply {
-            isAccessible = true
-            @Suppress("UNCHECKED_CAST")
-            val arr = get(null) as Array<Any?>
-            arr[0] = null
-            isAccessible = false
-        }
+            clazz.getDeclaredField("mainShell").apply {
+                isAccessible = true
+                @Suppress("UNCHECKED_CAST")
+                val arr = get(null) as Array<Any?>
+                arr[0] = null
+                isAccessible = false
+            }
 
-        clazz.getDeclaredField("mainBuilder").apply {
-            isAccessible = true
-            set(null, null)
-            isAccessible = false
-        }
+            clazz.getDeclaredField("mainBuilder").apply {
+                isAccessible = true
+                set(null, null)
+                isAccessible = false
+            }
 
-        SHELL = createMainRootShell()
-        tmp.close()
+            SHELL = createMainRootShell()
+            tmp.close()
+        } catch (e: Throwable) {
+            // refresh() runs inside installApatch() on the startup Thread-2;
+            // a reflection/linkage failure here must degrade to keeping the
+            // current shell instead of crashing the whole app.
+            Log.e(TAG, "refresh failed, keeping current main shell: " + e.message)
+        }
     }
 }
 
