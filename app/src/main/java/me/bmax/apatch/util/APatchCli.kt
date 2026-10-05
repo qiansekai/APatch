@@ -71,7 +71,9 @@ fun createRootShell(globalMnt: Boolean = false): Shell {
     }
 }
 
-private fun createMainRootShell() : Shell {
+// buildRootShell 构造 builder 并 build 出一个独立 shell，**不触碰 libsu 全局主 shell 状态**。
+// 抽出来是为了 refresh() 能先在全局态不动的前提下把新 shell 准备好（见 refresh 的窗口分析）。
+private fun buildRootShell(): Pair<Shell.Builder, Shell> {
     val builder = Shell.Builder.create()
         .setInitializers(RootShellInitializer::class.java)
     val shell = try {
@@ -93,18 +95,26 @@ private fun createMainRootShell() : Shell {
             }
         }
     }
+    return builder to shell
+}
 
+private fun createMainRootShell() : Shell {
+    val (builder, shell) = buildRootShell()
+    registerMainShell(builder)
+    return shell
+}
+
+// registerMainShell 登记主 shell builder。libsu 6.0.0 MainShell.setBuilder 是
+// static synchronized（锁 = MainShell.class），已初始化/已有缓存时抛 IllegalStateException。
+// 竞态对方是 libsu 静态入口 MainShell.get() 的 lazy 初始化（SuFile 等内部路径会走）：
+// 抛出说明登记没成功，但本 builder 已 build 出可用 shell，降级为 warning 而不是
+// 让调用方线程（启动 Thread-2）崩出崩溃页。
+private fun registerMainShell(builder: Shell.Builder) {
     try {
         MainShell.setBuilder(builder)
     } catch (e: IllegalStateException) {
-        // Cross-thread race: refresh()'s reflection reset of libsu's MainShell
-        // is not serialized against APatchCli.SHELL's lazy object init on other
-        // threads, so another thread may register the main shell in between.
-        // This builder already produced a usable shell; failing to re-register
-        // must not kill the caller (startup Thread-2 dies with a crash dialog).
         Log.w(TAG, "MainShell already registered, skip setBuilder: " + e.message)
     }
-    return shell
 }
 
 object APatchCli {
@@ -114,33 +124,53 @@ object APatchCli {
 
     // Serialized so a reader can never observe the half-reset MainShell (private
     // fields cleared via reflection) between the reset and the SHELL swap.
+    //
+    // 根治窗口（对照 libsu 6.0.0 MainShell 源码）：旧实现先反射置空全局态、再 build
+    // 新 shell —— build 要起 su 进程（百 ms 级），这段「全局已置空」的窗口里任何
+    // 第三方走静态入口（MainShell.get()，SuFile/模块列表等内部路径）都会 lazy 重建
+    // 主 shell（isInitMain=true 或 setCached 非空），随后本函数的 setBuilder 必抛
+    // "The main shell was already created"（首启高发的根因）。
+    // 新顺序：①先 build —— 全局态原封不动，窗口期第三方继续用旧缓存，完全正常；
+    // ②持 MainShell.class（与 libsu static synchronized 同一把锁，可重入）原子完成
+    // 「反射置空 + setBuilder」，第三方拿不到锁根本插不进来 —— 窗口归零。
+    // 任一步失败都降级为保留当前 SHELL（build 先行，失败时全局未被污染）。
     @Synchronized
     fun refresh() {
         val tmp = SHELL
 
         try {
-            val clazz = MainShell::class.java // reset MainShell
-            clazz.getDeclaredField("isInitMain").apply {
-                isAccessible = true
-                setBoolean(null, false)
-                isAccessible = false
+            // ① 先准备好新 shell（不动 libsu 全局态）
+            val (builder, shell) = buildRootShell()
+
+            // ② 锁内原子切换：置空与登记之间零窗口
+            synchronized(MainShell::class.java) {
+                val clazz = MainShell::class.java // reset MainShell
+                clazz.getDeclaredField("isInitMain").apply {
+                    isAccessible = true
+                    setBoolean(null, false)
+                    isAccessible = false
+                }
+
+                clazz.getDeclaredField("mainShell").apply {
+                    isAccessible = true
+                    @Suppress("UNCHECKED_CAST")
+                    val arr = get(null) as Array<Any?>
+                    // mainShell 由 libsu 以数组自身为监视器（@GuardedBy("self")）；
+                    // 嵌套序 class -> array 与 libsu 内部一致，无反序死锁
+                    synchronized(arr) { arr[0] = null }
+                    isAccessible = false
+                }
+
+                clazz.getDeclaredField("mainBuilder").apply {
+                    isAccessible = true
+                    set(null, null)
+                    isAccessible = false
+                }
+
+                registerMainShell(builder)
             }
 
-            clazz.getDeclaredField("mainShell").apply {
-                isAccessible = true
-                @Suppress("UNCHECKED_CAST")
-                val arr = get(null) as Array<Any?>
-                arr[0] = null
-                isAccessible = false
-            }
-
-            clazz.getDeclaredField("mainBuilder").apply {
-                isAccessible = true
-                set(null, null)
-                isAccessible = false
-            }
-
-            SHELL = createMainRootShell()
+            SHELL = shell
             tmp.close()
         } catch (e: Throwable) {
             // refresh() runs inside installApatch() on the startup Thread-2;
